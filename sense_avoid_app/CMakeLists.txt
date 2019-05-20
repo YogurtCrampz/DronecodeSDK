@@ -19,9 +19,8 @@ add_definitions("-Wall -Wextra -Werror")
 add_executable(sense_avoid_app
     sense_avoid.h
     sense_avoid_main.cpp
-    state_machine.cpp
-    plant.cpp
-    pid.cpp
+    sense_avoid_misc_funcs.cpp
+    sense_avoid_controller_funcs.cpp
     # ... any other source files
 )
 
@@ -29,6 +28,8 @@ add_executable(sense_avoid_app
 target_link_libraries(sense_avoid_app
     dronecode_sdk          #All apps link against dronecode_sdk library
     dronecode_sdk_action      # If action plugin used by app ...
+    dronecode_sdk_mission
     dronecode_sdk_telemetry   #If telemetry plugin used by app ...
+    dronecode_sdk_offboard
     # ... Any other linked libraries
 )
