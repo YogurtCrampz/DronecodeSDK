@@ -173,9 +173,9 @@ int main(int argc, char **argv)
 
     std::atomic<bool> want_to_pause{false};
     // Before starting the mission, we want to be sure to subscribe to the mission progress.
-    mission->subscribe_progress([&want_to_pause](int current, int total) {
+    mission->subscribe_progress([&want_to_pause](int current, int total) {  // Lambda closure function      [&want_to_pause] means capture variable by reference.
         std::cout << "Mission status update: " << current << " / " << total << std::endl;
-
+    
         if (current >= 2) {
             // We can only set a flag here. If we do more request inside the callback,
             // we risk blocking the system.
@@ -186,9 +186,9 @@ int main(int argc, char **argv)
     // Start Mission
     {
         std::cout << "Starting mission." << std::endl;
-        auto prom = std::make_shared<std::promise<Mission::Result>>();
-        auto future_result = prom->get_future();
-        mission->start_mission_async([prom](Mission::Result result) {
+        auto prom = std::make_shared<std::promise<Mission::Result>>(); // make_shared returns a shared_ptr object that owns and stores a pointer to a newly
+        auto future_result = prom->get_future();                        // allocated object of type promise, which is of type Mission::Result. So prom is a
+        mission->start_mission_async([prom](Mission::Result result) {   // shared_ptr of type promise.
             prom->set_value(result);
             std::cout << "Started mission." << std::endl;
         });
