@@ -19,8 +19,7 @@ add_definitions("-Wall -Wextra -Werror")
 add_executable(sense_avoid_app
     sense_avoid.h
     sense_avoid_main.cpp
-    sense_avoid_misc_funcs.cpp
-    sense_avoid_controller_funcs.cpp
+    sense_avoid_controller.cpp
     # ... any other source files
 )
 
