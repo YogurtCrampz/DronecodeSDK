@@ -11,63 +11,10 @@
 #include "sense_avoid.h"
 #endif
 
-// Handles Action's result
-inline void action_error_exit(Action::Result result, const std::string &message)
-{
-    if (result != Action::Result::SUCCESS) {
-        std::cerr << ERROR_CONSOLE_TEXT << message << Action::result_str(result)
-                  << NORMAL_CONSOLE_TEXT << std::endl;
-        exit(EXIT_FAILURE);
-    }
-}
+#ifndef PID_H
+#include "PID.h"
+#endif
 
-// Handles Offboard's result
-inline void offboard_error_exit(Offboard::Result result, const std::string &message)
-{
-    if (result != Offboard::Result::SUCCESS) {
-        std::cerr << ERROR_CONSOLE_TEXT << message << Offboard::result_str(result)
-                  << NORMAL_CONSOLE_TEXT << std::endl;
-        exit(EXIT_FAILURE);
-    }
-}
-
-// Handles connection result
-inline void connection_error_exit(ConnectionResult result, const std::string &message)
-{
-    if (result != ConnectionResult::SUCCESS) {
-        std::cerr << ERROR_CONSOLE_TEXT << message << connection_result_str(result)
-                  << NORMAL_CONSOLE_TEXT << std::endl;
-        exit(EXIT_FAILURE);
-    }
-}
-
-// Logs during Offboard control
-inline void offboard_log(const std::string &offb_mode, const std::string msg)
-{
-    std::cout << "[" << offb_mode << "] " << msg << std::endl;
-}
-
-/**
- * Does Offboard control using NED co-ordinates.
- *
- * returns true if everything went well in Offboard control, exits with a log otherwise.
- */
-bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard);
-
-bool offb_stopping_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard);
-
-bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard);
-
-
-void usage(std::string bin_name)
-{
-    std::cout << NORMAL_CONSOLE_TEXT << "Usage : " << bin_name << " <connection_url>" << std::endl
-              << "Connection URL format should be :" << std::endl
-              << " For TCP : tcp://[server_host][:server_port]" << std::endl
-              << " For UDP : udp://[bind_host][:bind_port]" << std::endl
-              << " For Serial : serial:///path/to/serial/dev[:baudrate]" << std::endl
-              << "For example, to connect to the simulator use URL: udp://:14540" << std::endl;
-}
 
 int main(int argc, char **argv)
 {
@@ -118,58 +65,94 @@ int main(int argc, char **argv)
     sleep_for(seconds(5));
 
 
+    // Start Offboard Mode
+    const std::string offb_mode = "NED";
+    // Send it once before starting offboard, otherwise it will be rejected.
+    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 0.0f});
+
+    Offboard::Result offboard_result = offboard->start();
+    offboard_error_exit(offboard_result, "Offboard start failed");
+    offboard_log(offb_mode, "Offboard started");
+
 
     // Start operation
-    main_state_t present_state, next_state;
-    bool object_detected = false, zero_velocity = false;
-    uint16_t count = 0;
-    //bool clk = false;
-    bool exit_condition = false;
+    state_t present_state = NORMAL, next_state = NORMAL;
+    bool is_finished = false, object_detected = false, zero_velocity = false, object_is_cleared = false;
+    bool normal_is_on = false, stopping_is_on = false, rising_is_on = false;
     bool ret = false;
+    bool isFirstTimeChecked = false, isSecondTimeChecked = false; //temporary check for recording system frequency or clock speed of while loop
+    uint32_t count = 0;
 
-    present_state = NORMAL; // Initialize state machine
+    dronecode_sdk::Telemetry::Position start = telemetry->position();
+    dronecode_sdk::Telemetry::Position destination = start;
+    destination.longitude_deg = start.longitude_deg + 0.0008993; // about 100m west of start position, 200m = 0.0017986 degrees
+    double obstacle_longitude_deg = start.longitude_deg + (destination.longitude_deg - start.longitude_deg)/3;
+    Obstacle obstacle = {start.latitude_deg, obstacle_longitude_deg, 10, 20};
+    
+    PID pid(0.020, 5, -5, 20, 10, 0.5, 1);
+    double pres_val, set_val, inc;
 
-    // Start state machine, which is 3 separate threads running continuously?
-    //StateMachineInit(present_state, next_state, exit_condition,
-      //                  object_detected, zero_velocity, clk);
+    std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
 
-    // Start clock thread(s)
-    while(1) {
-        if(count == 999) {
+
+    // Clock / Memory (main) thread
+    while(!is_finished) {
+        // Memory
+        if(count == 999999) {   // 50 Hz = 20 ms = 0.020 s
             present_state = next_state;
             count = 0;
 
             // Need to measure time
-            /*auto start = std::chrono::system_clock::now();
-            // Some computation here
-            auto end = std::chrono::system_clock::now();
+            if(!isFirstTimeChecked) {
+                timeStart = std::chrono::system_clock::now(); 
+                isFirstTimeChecked = true;   
+            }
+            if(!isSecondTimeChecked) {
+                timeEnd = std::chrono::system_clock::now();
 
-            std::chrono::duration<double> elapsed_seconds = end-start;
-            std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+                std::chrono::duration<double> elapsed_seconds = timeEnd-timeStart;
+                std::time_t end_time = std::chrono::system_clock::to_time_t(timeEnd);
 
-            std::cout << "finished computation at " << std::ctime(&end_time)
-                    << "elapsed time: " << elapsed_seconds.count() << "s\n";*/
+                std::cout << "finished computation at " << std::ctime(&end_time)
+                        << "elapsed time: " << elapsed_seconds.count() << "s\n";
+                isSecondTimeChecked = true;
+            }
+            
         }
-        
-        // next state logic
+
+        // Update variables
+        if(CalculateObstacleDistance(telemetry,obstacle) <= 40.0)
+            object_detected = true;
+        else
+            object_detected = false;
+        if(telemetry->ground_speed_ned().velocity_east_m_s == 0) // or abs() less than some value.
+            zero_velocity = true;
+        else
+            zero_velocity = false;
+        if(telemetry->position().relative_altitude_m >= float(obstacle.topAltitude))
+            object_is_cleared = true;
+        else 
+            object_is_cleared = false;
+
+        // Next State Logic
+        next_state = present_state; // default
         switch(present_state) {
             case NORMAL:
-                // If end is nigh
-                if(false)
-                    next_state = FINISH;
-                else if(object_detected)
+                if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
+                    next_state = FINISH;                                            // greater than destination longitude
+                else if(object_detected)    // object within 40 meters
                     next_state = STOPPING;
                 break;
             case STOPPING:
-                if(false)
+                if(telemetry->position().longitude_deg >= destination.longitude_deg)
                     next_state = FINISH;
                 else if(zero_velocity)
                     next_state = RISING;
                 break;
             case RISING:
-                if(false)
+                if(telemetry->position().longitude_deg >= destination.longitude_deg)
                     next_state = FINISH;
-                else if(!object_detected)
+                else if(object_is_cleared)
                     next_state = NORMAL;
                 break;
             case FINISH:
@@ -180,42 +163,77 @@ int main(int argc, char **argv)
         // Output Logic
         switch(present_state) {
             case NORMAL:
-                // call normal operation ned func.
-                ret = offb_normal_ctrl_ned(offboard);
-                if (ret == false)
-                    return EXIT_FAILURE;
+                stopping_is_on = false;
+                rising_is_on = false;
+                if(!normal_is_on) {
+                    ret = offb_normal_ctrl_ned(offboard, offb_mode);
+                    normal_is_on = true;
+                } 
                 break;
             case STOPPING:
-                // call stopping operation ned func.
-                ret = offb_stopping_ctrl_ned(offboard);
-                if (ret == false)
-                    return EXIT_FAILURE;
+                normal_is_on = false;
+                rising_is_on = false;
+                if(!stopping_is_on) {
+                    // initialize controller
+                    stopping_is_on = true;
+                    pres_val = CalculateObstacleDistance(telemetry, obstacle);
+                    set_val = 3;
+                }
+                else if(stopping_is_on && !zero_velocity) {
+                    // velocity command
+                    ret = offb_stopping_ctrl_ned(offboard, pres_val, offb_mode);
+                    
+                    // update controller
+                    inc = pid.Calculate(set_val, pres_val);
+
+                    pres_val += inc;
+                }
+                else if(stopping_is_on && zero_velocity) {
+                    // end controller
+
+                }
+                    
                 break;
             case RISING:
-                // call rising operation ned func.
-                ret = offb_rising_ctrl_ned(offboard);
-                if (ret == false)
-                    return EXIT_FAILURE;
+                normal_is_on = false;
+                stopping_is_on = false;
+                if(!rising_is_on) {
+                    ret = offb_rising_ctrl_ned(offboard, offb_mode);
+                    rising_is_on = true;
+                }
                 break;
             case FINISH:
-                exit_condition = true;
+                is_finished = true;
                 break;
         }
 
+        if (ret == false) 
+            return EXIT_FAILURE;
 
-        if(exit_condition)
-            break;
         count++;
     }
 
-    // join threads
 
-    //  using local NED co-ordinates is output of state machine
-    /*ret = offb_normal_ctrl_ned(offboard);
-    if (ret == false) {
-        return EXIT_FAILURE;
-    }*/
+    // next state logic Thread 1
+    //std::thread next_state_thread(NextStateLogic, present_state, next_state,
+                                //is_finished, object_detected, zero_velocity);
 
+    // Output Logic Thread 2
+    //std::thread output_thread(OutputLogic, present_state, is_finished, offboard,
+                                //returnCode);
+
+    // Simulate Obstacle Thread 3
+    //std::thread input_thread(SimulateObstacle);
+
+    //next_state_thread.join();
+    //output_thread.join();
+    //input_thread.join();
+
+
+    // Now, stop offboard mode.
+    offboard_result = offboard->stop();
+    offboard_error_exit(offboard_result, "Offboard stop failed: ");
+    offboard_log(offb_mode, "Offboard stopped");
 
 
     const Action::Result land_result = action->land();
@@ -235,100 +253,3 @@ int main(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
-bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard)
-{
-    const std::string offb_mode = "NED";
-    // Send it once before starting offboard, otherwise it will be rejected.
-    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 0.0f});
-
-    Offboard::Result offboard_result = offboard->start();
-    offboard_error_exit(offboard_result, "Offboard start failed");
-    offboard_log(offb_mode, "Offboard started");
-
-    /*offboard_log(offb_mode, "Turn to face East");
-    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 90.0f});
-    sleep_for(seconds(1)); // Let yaw settle.*/
-
-    /*{
-        const float step_size = 0.01f;
-        const float one_cycle = 2.0f * (float)M_PI;
-        const unsigned steps = 2 * unsigned(one_cycle / step_size);
-
-        offboard_log(offb_mode, "Go North and back South");
-        for (unsigned i = 0; i < steps; ++i) {
-            float vx = 5.0f * sinf(i * step_size);
-            offboard->set_velocity_ned({vx, 0.0f, 0.0f, 90.0f});
-            sleep_for(milliseconds(10));
-        }
-    }*/
-
-    /*offboard_log(offb_mode, "Turn to face West");
-    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 270.0f});
-    sleep_for(seconds(2));*/
-
-    /*offboard_log(offb_mode, "Go up 2 m/s, turn to face South");
-    offboard->set_velocity_ned({0.0f, 0.0f, -2.0f, 180.0f});
-    sleep_for(seconds(4));*/
-
-    /*offboard_log(offb_mode, "Go down 1 m/s, turn to face North");
-    offboard->set_velocity_ned({0.0f, 0.0f, 1.0f, 0.0f});
-    sleep_for(seconds(4));*/
-
-    // Go North 100m 
-    offboard_log(offb_mode, "Go north 100m");
-    offboard->set_velocity_ned({5.0f, 0.0f, 0.0f, 0.0f});
-    sleep_for(seconds(4)); // or while loop?
-
-    // Now, stop offboard mode.
-    offboard_result = offboard->stop();
-    offboard_error_exit(offboard_result, "Offboard stop failed: ");
-    offboard_log(offb_mode, "Offboard stopped");
-
-    return true;
-}
-
-bool offb_stopping_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard) {
-    const std::string offb_mode = "NED";
-    // Send it once before starting offboard, otherwise it will be rejected.
-    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 0.0f});
-
-    Offboard::Result offboard_result = offboard->start();
-    offboard_error_exit(offboard_result, "Offboard start failed");
-    offboard_log(offb_mode, "Offboard started");
-
-
-    // Go North 100m 
-    offboard_log(offb_mode, "Go north 100m");
-    offboard->set_velocity_ned({5.0f, 0.0f, 0.0f, 0.0f});
-    sleep_for(seconds(4)); // or while loop?
-
-    // Now, stop offboard mode.
-    offboard_result = offboard->stop();
-    offboard_error_exit(offboard_result, "Offboard stop failed: ");
-    offboard_log(offb_mode, "Offboard stopped");
-
-    return true;
-};
-
-bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard) {
-    const std::string offb_mode = "NED";
-    // Send it once before starting offboard, otherwise it will be rejected.
-    offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 0.0f});
-
-    Offboard::Result offboard_result = offboard->start();
-    offboard_error_exit(offboard_result, "Offboard start failed");
-    offboard_log(offb_mode, "Offboard started");
-
-
-    // Go North 100m 
-    offboard_log(offb_mode, "Go north 100m");
-    offboard->set_velocity_ned({5.0f, 0.0f, 0.0f, 0.0f});
-    sleep_for(seconds(4)); // or while loop?
-
-    // Now, stop offboard mode.
-    offboard_result = offboard->stop();
-    offboard_error_exit(offboard_result, "Offboard stop failed: ");
-    offboard_log(offb_mode, "Offboard stopped");
-
-    return true;
-};

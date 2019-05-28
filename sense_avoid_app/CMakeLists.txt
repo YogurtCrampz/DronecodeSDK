@@ -18,6 +18,7 @@ add_definitions("-Wall -Wextra -Werror")
 # Specify your app's executable name, and list of source files used to create it.
 add_executable(sense_avoid_app
     sense_avoid.h
+    PID.h
     sense_avoid_main.cpp
     sense_avoid_controller.cpp
     # ... any other source files
