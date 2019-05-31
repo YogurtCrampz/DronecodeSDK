@@ -77,20 +77,22 @@ int main(int argc, char **argv)
 
     // Start operation
     state_t present_state = NORMAL, next_state = NORMAL;
-    bool is_finished = false, object_detected = false, zero_velocity = false, object_is_cleared = false;
-    bool normal_is_on = false, stopping_is_on = false, rising_is_on = false;
+    bool is_finished = false, object_detected = false, zero_velocity = false, height_is_reached = false, object_is_cleared = false;
+    bool normal_is_on = false, stopping_is_on = false, rising_is_on = false, traversing_is_on = false;
     bool ret = false;
     bool isFirstTimeChecked = false, isSecondTimeChecked = false; //temporary check for recording system frequency or clock speed of while loop
-    uint32_t count = 0;
+    uint64_t count = 0;
 
     dronecode_sdk::Telemetry::Position start = telemetry->position();
     dronecode_sdk::Telemetry::Position destination = start;
-    destination.longitude_deg = start.longitude_deg + 0.0008993; // about 100m west of start position, 200m = 0.0017986 degrees
+    destination.longitude_deg = start.longitude_deg + 0.0017986; // about 100m west of start position, 200m = 0.0017986 degrees 100 m = 0.0008993 degrees
     double obstacle_longitude_deg = start.longitude_deg + (destination.longitude_deg - start.longitude_deg)/3;
-    Obstacle obstacle = {start.latitude_deg, obstacle_longitude_deg, 10, 20};
+    Obstacle obstacle = {start.latitude_deg, obstacle_longitude_deg, 10, 20, 10};
     
-    PID pid(0.020, 5, -5, 20, 10, 0.5, 1);
-    double pres_val, set_val, inc;
+    PID pid_front_facing(0.0220, 10, -10, 0.1, 5, 0.01, 2);
+    //PID pid_down_facing(0.0220, 10, -10, 0.1, 5, 0.01, 2);
+    double front_pres_val, front_set_val, front_pid_output;
+    //double down_pres_val, down_set_val, down_pid_output;
 
     std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
 
@@ -98,16 +100,16 @@ int main(int argc, char **argv)
     // Clock / Memory (main) thread
     while(!is_finished) {
         // Memory
-        if(count == 999999) {   // 50 Hz = 20 ms = 0.020 s
+        if(count == 9999999) {   // 50 Hz = 20 ms = 0.020 s  45.6 Hz = 0.0219278 s
             present_state = next_state;
             count = 0;
 
             // Need to measure time
             if(!isFirstTimeChecked) {
                 timeStart = std::chrono::system_clock::now(); 
-                isFirstTimeChecked = true;   
+                   
             }
-            if(!isSecondTimeChecked) {
+            else if(isFirstTimeChecked && !isSecondTimeChecked) {
                 timeEnd = std::chrono::system_clock::now();
 
                 std::chrono::duration<double> elapsed_seconds = timeEnd-timeStart;
@@ -117,117 +119,130 @@ int main(int argc, char **argv)
                         << "elapsed time: " << elapsed_seconds.count() << "s\n";
                 isSecondTimeChecked = true;
             }
-            
-        }
+            isFirstTimeChecked = true;
 
-        // Update variables
-        if(CalculateObstacleDistance(telemetry,obstacle) <= 40.0)
-            object_detected = true;
-        else
-            object_detected = false;
-        if(telemetry->ground_speed_ned().velocity_east_m_s == 0) // or abs() less than some value.
-            zero_velocity = true;
-        else
-            zero_velocity = false;
-        if(telemetry->position().relative_altitude_m >= float(obstacle.topAltitude))
-            object_is_cleared = true;
-        else 
-            object_is_cleared = false;
 
-        // Next State Logic
-        next_state = present_state; // default
-        switch(present_state) {
-            case NORMAL:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
-                    next_state = FINISH;                                            // greater than destination longitude
-                else if(object_detected)    // object within 40 meters
-                    next_state = STOPPING;
-                break;
-            case STOPPING:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+            // Update variables
+            if((CalculateObstacleDistance(telemetry,obstacle) <= 40.0) && (telemetry->position().longitude_deg <= destination.longitude_deg))
+                object_detected = true;
+            else
+                object_detected = false;
+            if((fabs(telemetry->ground_speed_ned().velocity_east_m_s) <= 0.1f) && (fabs(CalculateObstacleDistance(telemetry, obstacle) - front_set_val) <= 0.01))
+                zero_velocity = true;
+            else
+                zero_velocity = false;
+            if(telemetry->position().relative_altitude_m >= 5.0f + float(obstacle.topAltitude))
+                height_is_reached = true;
+            else 
+                height_is_reached = false;
+            if(ObstacleCleared(telemetry, obstacle))
+                object_is_cleared = true;
+            else 
+                object_is_cleared = false;
+
+            // Next State Logic
+            next_state = present_state; // default
+            switch(present_state) {
+                case NORMAL:
+                    if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
+                        next_state = FINISH;                                            // greater than destination longitude
+                    else if(object_detected)    // object within 40 meters
+                        next_state = STOPPING;
+                    break;
+                case STOPPING:
+                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                        next_state = FINISH;
+                    else if(zero_velocity)
+                        next_state = RISING;
+                    break;
+                case RISING:
+                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                        next_state = FINISH;
+                    else if(height_is_reached)
+                        next_state = TRAVERSE;
+                    break;
+                case TRAVERSE:
+                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                        next_state = FINISH;
+                    else if(object_is_cleared)
+                        next_state = NORMAL;
+                    break;
+                case FINISH:
                     next_state = FINISH;
-                else if(zero_velocity)
-                    next_state = RISING;
-                break;
-            case RISING:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg)
-                    next_state = FINISH;
-                else if(object_is_cleared)
-                    next_state = NORMAL;
-                break;
-            case FINISH:
-                next_state = FINISH;
-                break;
+                    break;
+            }
+
+            // Output Logic
+            switch(present_state) {
+                case NORMAL:
+                    stopping_is_on = false;
+                    rising_is_on = false;
+                    traversing_is_on = false;
+                    if(!normal_is_on) {
+                        ret = offb_normal_ctrl_ned(offboard, offb_mode);
+                        normal_is_on = true;
+                    } 
+                    break;
+                case STOPPING:
+                    normal_is_on = false;
+                    rising_is_on = false;
+                    traversing_is_on = false;
+                    if(!stopping_is_on) {
+                        // initialize controller
+                        stopping_is_on = true;
+                        front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
+                        front_set_val = 3;
+                    }
+                    else if(stopping_is_on && !zero_velocity) {
+                        // velocity command
+                        ret = offb_stopping_ctrl_ned(offboard, front_pid_output, offb_mode);
+                        
+                        // Present Value is given by obstacle distance 
+                        front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
+
+                        // update controller
+                        front_pid_output = pid_front_facing.Calculate(front_set_val, front_pres_val); 
+                    }
+                    else if(stopping_is_on && zero_velocity) {
+                        // end controller
+                            // do nothing
+                    }
+                    // Temporary Debug Info
+                    std::cout << "Obstacle Distance: " << CalculateObstacleDistance(telemetry, obstacle) << std::endl 
+                                << "Front PID Output Value: " << front_pid_output << std::endl;
+                        
+                    break;
+                case RISING:
+                    normal_is_on = false;
+                    stopping_is_on = false;
+                    traversing_is_on = false;
+                    if(!rising_is_on) {
+                        ret = offb_rising_ctrl_ned(offboard, offb_mode);
+                        rising_is_on = true;
+                    }
+                    break;
+                case TRAVERSE:
+                    normal_is_on = false;
+                    stopping_is_on = false;
+                    rising_is_on = false;
+                    if(!traversing_is_on) {
+                        ret = offb_traversing_ctrl_ned(offboard, offb_mode);
+                        traversing_is_on = true;
+                    }
+                    break;
+                case FINISH:
+                    is_finished = true;
+                    break;
+            }
+
+            if (ret == false) 
+                return EXIT_FAILURE;
         }
 
-        // Output Logic
-        switch(present_state) {
-            case NORMAL:
-                stopping_is_on = false;
-                rising_is_on = false;
-                if(!normal_is_on) {
-                    ret = offb_normal_ctrl_ned(offboard, offb_mode);
-                    normal_is_on = true;
-                } 
-                break;
-            case STOPPING:
-                normal_is_on = false;
-                rising_is_on = false;
-                if(!stopping_is_on) {
-                    // initialize controller
-                    stopping_is_on = true;
-                    pres_val = CalculateObstacleDistance(telemetry, obstacle);
-                    set_val = 3;
-                }
-                else if(stopping_is_on && !zero_velocity) {
-                    // velocity command
-                    ret = offb_stopping_ctrl_ned(offboard, pres_val, offb_mode);
-                    
-                    // update controller
-                    inc = pid.Calculate(set_val, pres_val);
-
-                    pres_val += inc;
-                }
-                else if(stopping_is_on && zero_velocity) {
-                    // end controller
-
-                }
-                    
-                break;
-            case RISING:
-                normal_is_on = false;
-                stopping_is_on = false;
-                if(!rising_is_on) {
-                    ret = offb_rising_ctrl_ned(offboard, offb_mode);
-                    rising_is_on = true;
-                }
-                break;
-            case FINISH:
-                is_finished = true;
-                break;
-        }
-
-        if (ret == false) 
-            return EXIT_FAILURE;
+        
 
         count++;
     }
-
-
-    // next state logic Thread 1
-    //std::thread next_state_thread(NextStateLogic, present_state, next_state,
-                                //is_finished, object_detected, zero_velocity);
-
-    // Output Logic Thread 2
-    //std::thread output_thread(OutputLogic, present_state, is_finished, offboard,
-                                //returnCode);
-
-    // Simulate Obstacle Thread 3
-    //std::thread input_thread(SimulateObstacle);
-
-    //next_state_thread.join();
-    //output_thread.join();
-    //input_thread.join();
 
 
     // Now, stop offboard mode.

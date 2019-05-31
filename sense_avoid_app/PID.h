@@ -42,7 +42,7 @@ class PID {
             double Dout = _Kd * derivative;
 
             // Calculate total output
-            double output = Pout + Iout + Dout;
+            double output = (-1) *_K * (Pout + Iout + Dout);
 
             // Restrict to max/min
             if( output > _max )

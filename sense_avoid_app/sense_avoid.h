@@ -36,7 +36,8 @@ using std::chrono::seconds;
 enum state_t {
     NORMAL,
     STOPPING,
-    RISING, 
+    RISING,
+    TRAVERSE, 
     FINISH
 };
 
@@ -45,6 +46,7 @@ struct Obstacle {
     double longitude_deg;
     double bottomAltitude;
     double topAltitude;
+    double length;
 };
 
 // Handles Action's result (was inline)
@@ -71,6 +73,8 @@ bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std
 bool offb_stopping_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, double present_value, std::string offb_mode);
 
 bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode);
+
+bool offb_traversing_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode);
 
 
 
@@ -102,6 +106,8 @@ double CalculateDestinationDistance(std::shared_ptr<dronecode_sdk::Telemetry> te
 // Make obstacle class with coordinates and height in altitude
 
 double haversin(double angle);
+
+bool ObstacleCleared(std::shared_ptr<dronecode_sdk::Telemetry> telemetry, Obstacle obstacle);
 
 
 #endif  /* SENSE_AVOID_H */
