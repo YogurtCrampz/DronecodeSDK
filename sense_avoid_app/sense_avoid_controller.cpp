@@ -89,7 +89,8 @@ bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std
 bool offb_traversing_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode) {
     float vel_forwardf = 5.0f;
 
-    // Raise altitude until object is no longer seen
+    // Go forward until down sensor picks up something within maybe 5 meters then turn on altitude controller
+    // Then have semi-normal state?
     offboard_log(offb_mode, "Traversing Sequence Velocity Command");
     offboard->set_velocity_ned({0.0f, vel_forwardf, 0.0f, 0.0f});
     //sleep_for(seconds(4));

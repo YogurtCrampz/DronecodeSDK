@@ -5,6 +5,17 @@
  * @authors Author: Julian Oes <julian@oes.ch>,
  *                  Shakthi Prashanth <shakthi.prashanth.m@intel.com>
  * @date 2017-10-17
+ * 
+ * 
+ * Author: Julian Torres
+ * File Name: sense_avoid_main.cpp
+ * Purpose:
+ *      Implementation of a sense and avoid feature with simulated distance sensor input.
+ *      Uses basic structure of:
+ *          // Output Commands
+ *          // Get New Data
+ *          // Next Input
+ *          // Wait for delay
  */
 
 #ifndef SENSE_AVOID_H
@@ -80,8 +91,6 @@ int main(int argc, char **argv)
     bool is_finished = false, object_detected = false, zero_velocity = false, height_is_reached = false, object_is_cleared = false;
     bool normal_is_on = false, stopping_is_on = false, rising_is_on = false, traversing_is_on = false;
     bool ret = false;
-    bool isFirstTimeChecked = false, isSecondTimeChecked = false; //temporary check for recording system frequency or clock speed of while loop
-    uint64_t count = 0;
 
     dronecode_sdk::Telemetry::Position start = telemetry->position();
     dronecode_sdk::Telemetry::Position destination = start;
@@ -95,153 +104,143 @@ int main(int argc, char **argv)
     //double down_pres_val, down_set_val, down_pid_output;
 
     std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
+    std::chrono::duration<double> elapsed_seconds;
 
 
     // Clock / Memory (main) thread
     while(!is_finished) {
-        // Memory
-        if(count == 9999999) {   // 50 Hz = 20 ms = 0.020 s  45.6 Hz = 0.0219278 s
-            present_state = next_state;
-            count = 0;
+        // Start timer for delay
+        timeStart = std::chrono::system_clock::now();
+        timeEnd = std::chrono::system_clock::now();
 
-            // Need to measure time
-            if(!isFirstTimeChecked) {
-                timeStart = std::chrono::system_clock::now(); 
-                   
-            }
-            else if(isFirstTimeChecked && !isSecondTimeChecked) {
-                timeEnd = std::chrono::system_clock::now();
+        // Output Logic (Output Commands based on current state)
+        switch(present_state) {
+            case NORMAL:
+                stopping_is_on = false;
+                rising_is_on = false;
+                traversing_is_on = false;
+                if(!normal_is_on) {
+                    ret = offb_normal_ctrl_ned(offboard, offb_mode);
+                    normal_is_on = true;
+                } 
+                break;
+            case STOPPING:
+                normal_is_on = false;
+                rising_is_on = false;
+                traversing_is_on = false;
+                if(!stopping_is_on) {
+                    // initialize controller
+                    stopping_is_on = true;
+                    front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
+                    front_set_val = 3;
+                }
+                else if(stopping_is_on && !zero_velocity) {
+                    // velocity command
+                    ret = offb_stopping_ctrl_ned(offboard, front_pid_output, offb_mode);
+                    
+                    // Present Value is given by obstacle distance 
+                    front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
 
-                std::chrono::duration<double> elapsed_seconds = timeEnd-timeStart;
-                std::time_t end_time = std::chrono::system_clock::to_time_t(timeEnd);
-
-                std::cout << "finished computation at " << std::ctime(&end_time)
-                        << "elapsed time: " << elapsed_seconds.count() << "s\n";
-                isSecondTimeChecked = true;
-            }
-            isFirstTimeChecked = true;
-
-
-            // Update variables
-            if((CalculateObstacleDistance(telemetry,obstacle) <= 40.0) && (telemetry->position().longitude_deg <= destination.longitude_deg))
-                object_detected = true;
-            else
-                object_detected = false;
-            if((fabs(telemetry->ground_speed_ned().velocity_east_m_s) <= 0.1f) && (fabs(CalculateObstacleDistance(telemetry, obstacle) - front_set_val) <= 0.01))
-                zero_velocity = true;
-            else
-                zero_velocity = false;
-            if(telemetry->position().relative_altitude_m >= 5.0f + float(obstacle.topAltitude))
-                height_is_reached = true;
-            else 
-                height_is_reached = false;
-            if(ObstacleCleared(telemetry, obstacle))
-                object_is_cleared = true;
-            else 
-                object_is_cleared = false;
-
-            // Next State Logic
-            next_state = present_state; // default
-            switch(present_state) {
-                case NORMAL:
-                    if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
-                        next_state = FINISH;                                            // greater than destination longitude
-                    else if(object_detected)    // object within 40 meters
-                        next_state = STOPPING;
-                    break;
-                case STOPPING:
-                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
-                        next_state = FINISH;
-                    else if(zero_velocity)
-                        next_state = RISING;
-                    break;
-                case RISING:
-                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
-                        next_state = FINISH;
-                    else if(height_is_reached)
-                        next_state = TRAVERSE;
-                    break;
-                case TRAVERSE:
-                    if(telemetry->position().longitude_deg >= destination.longitude_deg)
-                        next_state = FINISH;
-                    else if(object_is_cleared)
-                        next_state = NORMAL;
-                    break;
-                case FINISH:
-                    next_state = FINISH;
-                    break;
-            }
-
-            // Output Logic
-            switch(present_state) {
-                case NORMAL:
-                    stopping_is_on = false;
-                    rising_is_on = false;
-                    traversing_is_on = false;
-                    if(!normal_is_on) {
-                        ret = offb_normal_ctrl_ned(offboard, offb_mode);
-                        normal_is_on = true;
-                    } 
-                    break;
-                case STOPPING:
-                    normal_is_on = false;
-                    rising_is_on = false;
-                    traversing_is_on = false;
-                    if(!stopping_is_on) {
-                        // initialize controller
-                        stopping_is_on = true;
-                        front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
-                        front_set_val = 3;
-                    }
-                    else if(stopping_is_on && !zero_velocity) {
-                        // velocity command
-                        ret = offb_stopping_ctrl_ned(offboard, front_pid_output, offb_mode);
-                        
-                        // Present Value is given by obstacle distance 
-                        front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
-
-                        // update controller
-                        front_pid_output = pid_front_facing.Calculate(front_set_val, front_pres_val); 
-                    }
-                    else if(stopping_is_on && zero_velocity) {
-                        // end controller
-                            // do nothing
-                    }
-                    // Temporary Debug Info
-                    std::cout << "Obstacle Distance: " << CalculateObstacleDistance(telemetry, obstacle) << std::endl 
-                                << "Front PID Output Value: " << front_pid_output << std::endl;
-                        
-                    break;
-                case RISING:
-                    normal_is_on = false;
-                    stopping_is_on = false;
-                    traversing_is_on = false;
-                    if(!rising_is_on) {
-                        ret = offb_rising_ctrl_ned(offboard, offb_mode);
-                        rising_is_on = true;
-                    }
-                    break;
-                case TRAVERSE:
-                    normal_is_on = false;
-                    stopping_is_on = false;
-                    rising_is_on = false;
-                    if(!traversing_is_on) {
-                        ret = offb_traversing_ctrl_ned(offboard, offb_mode);
-                        traversing_is_on = true;
-                    }
-                    break;
-                case FINISH:
-                    is_finished = true;
-                    break;
-            }
-
-            if (ret == false) 
-                return EXIT_FAILURE;
+                    // update controller
+                    front_pid_output = pid_front_facing.Calculate(front_set_val, front_pres_val); 
+                }
+                else if(stopping_is_on && zero_velocity) {
+                    // end controller
+                        // do nothing
+                }
+                // Temporary Debug Info
+                std::cout << "Obstacle Distance: " << CalculateObstacleDistance(telemetry, obstacle) << std::endl 
+                            << "Front PID Output Value: " << front_pid_output << std::endl;
+                    
+                break;
+            case RISING:
+                normal_is_on = false;
+                stopping_is_on = false;
+                traversing_is_on = false;
+                if(!rising_is_on) {
+                    ret = offb_rising_ctrl_ned(offboard, offb_mode);
+                    rising_is_on = true;
+                }
+                break;
+            case TRAVERSE:
+                normal_is_on = false;
+                stopping_is_on = false;
+                rising_is_on = false;
+                if(!traversing_is_on) {
+                    ret = offb_traversing_ctrl_ned(offboard, offb_mode);
+                    traversing_is_on = true;
+                }
+                break;
+            case FINISH:
+                is_finished = true;
+                break;
         }
 
+        if (ret == false) // throw error if there is an issue with sending velocity commands
+            return EXIT_FAILURE;
         
+        // Get New Data (Update variables/Inputs to Next state logic)
+        if((CalculateObstacleDistance(telemetry,obstacle) <= 40.0) && (telemetry->position().longitude_deg <= destination.longitude_deg))
+            object_detected = true;
+        else
+            object_detected = false;
+        if((fabs(telemetry->ground_speed_ned().velocity_east_m_s) <= 0.1f) && (fabs(CalculateObstacleDistance(telemetry, obstacle) - front_set_val) <= 0.01))
+            zero_velocity = true;
+        else
+            zero_velocity = false;
+        if(telemetry->position().relative_altitude_m >= 5.0f + float(obstacle.topAltitude))
+            height_is_reached = true;
+        else 
+            height_is_reached = false;
+        if(ObstacleCleared(telemetry, obstacle))
+            object_is_cleared = true;
+        else 
+            object_is_cleared = false;
 
-        count++;
+        // Next State Logic
+        next_state = present_state; // default next state
+        switch(present_state) {
+            case NORMAL:
+                if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
+                    next_state = FINISH;                                            // greater than destination longitude
+                else if(object_detected)    // object within 40 meters
+                    next_state = STOPPING;
+                break;
+            case STOPPING:
+                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                    next_state = FINISH;
+                else if(zero_velocity)
+                    next_state = RISING;
+                break;
+            case RISING:
+                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                    next_state = FINISH;
+                else if(height_is_reached)
+                    next_state = TRAVERSE;
+                break;
+            case TRAVERSE:
+                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+                    next_state = FINISH;
+                else if(object_is_cleared)
+                    next_state = NORMAL;
+                break;
+            case FINISH:
+                next_state = FINISH;
+                break;
+        }
+        
+        // Memory (Update present state)
+        present_state = next_state;
+
+        // Delay
+        elapsed_seconds = timeEnd-timeStart;
+        while(elapsed_seconds.count() <= 0.020) {
+            timeEnd = std::chrono::system_clock::now();
+            elapsed_seconds = timeEnd-timeStart;
+        }
+
+        //std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
+
     }
 
 
