@@ -13,8 +13,9 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
-#include <thread>
+#include <thread> // possibly don't need but not sure
 
+#include <stack>
 #include <ctime> // for calculating state machine frequency
 #include <mutex> // For threading
 
@@ -35,9 +36,8 @@ using std::chrono::seconds;
 
 enum state_t {
     NORMAL,
-    STOPPING,
-    RISING,
-    TRAVERSE, 
+    AVOIDANCE,
+    SETTLE, 
     FINISH
 };
 
@@ -68,46 +68,23 @@ void usage(std::string bin_name);
  *
  * returns true if everything went well in Offboard control, exits with a log otherwise.
  */
-bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode);
+bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode, double down_present_value);
 
-bool offb_stopping_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, double present_value, std::string offb_mode);
+bool offb_avoidance_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode, double front_present_value);
 
-bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode);
-
-bool offb_traversing_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode);
+bool offb_settle_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode, double down_present_value);
 
 
+double CalculateObstacleDistance(double copter_longitude_deg, Obstacle obstacle);
 
-/*void StoppingController(std::shared_ptr<dronecode_sdk::Telemetry> telemetry,
-                        std::shared_ptr<dronecode_sdk::Offboard> offboard,
-                            Obstacle obstacle, bool zero_velocity, bool &ret);*/
+bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle);
 
-//int PID(int pid_input);
+double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle_list[]);
 
-//int Plant(int plant_input);
 
-//void GenerateClock();
-
-/*void StateMachineInit(enum main_state_t &present_state, enum main_state_t &next_state, bool exit_condition, 
-                bool object_detected, bool zero_velocity, bool clk);*/
-
-/*void NextStateLogic(state_t present_state, state_t &next_state, 
-                bool is_finished, bool object_detected, bool zero_velocity);
-
-void OutputLogic(state_t present_state, bool &is_finished,
-                std::shared_ptr<dronecode_sdk::Offboard> offboard);*/
-
-double CalculateObstacleDistance(std::shared_ptr<dronecode_sdk::Telemetry> telemetry,
-                            Obstacle obstacle);
-
-double CalculateDestinationDistance(std::shared_ptr<dronecode_sdk::Telemetry> telemetry,
-                            dronecode_sdk::Telemetry::Position destination);
-
-// Make obstacle class with coordinates and height in altitude
+double ArcLengthToAngle(double length);
 
 double haversin(double angle);
-
-bool ObstacleCleared(std::shared_ptr<dronecode_sdk::Telemetry> telemetry, Obstacle obstacle);
 
 
 #endif  /* SENSE_AVOID_H */

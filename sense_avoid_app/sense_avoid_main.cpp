@@ -86,89 +86,103 @@ int main(int argc, char **argv)
     offboard_log(offb_mode, "Offboard started");
 
 
-    // Start operation
+
+
+
+    // Start operation --------------------------------------------------------------------------------------------------------------------------------
+
+    // Variable Declarations
     state_t present_state = NORMAL, next_state = NORMAL;
-    bool is_finished = false, object_detected = false, zero_velocity = false, height_is_reached = false, object_is_cleared = false;
-    bool normal_is_on = false, stopping_is_on = false, rising_is_on = false, traversing_is_on = false;
-    bool ret = false;
+    bool is_finished = false, object_detected = false, is_settled = false, is_destination_reached = false;
+    bool normal_is_on = false, avoidance_is_on = false, settle_is_on = false;
+    bool ret = true;
 
     dronecode_sdk::Telemetry::Position start = telemetry->position();
     dronecode_sdk::Telemetry::Position destination = start;
     destination.longitude_deg = start.longitude_deg + 0.0017986; // about 100m west of start position, 200m = 0.0017986 degrees 100 m = 0.0008993 degrees
-    double obstacle_longitude_deg = start.longitude_deg + (destination.longitude_deg - start.longitude_deg)/3;
-    Obstacle obstacle = {start.latitude_deg, obstacle_longitude_deg, 10, 20, 10};
+
+    double copter_longitude_deg = telemetry->position().longitude_deg; 
+    double copter_relative_altitude_m = double(telemetry->position().relative_altitude_m);
+
+    // Simulated Obstacles to simulate sensor data
+    double obstacle1_longitude_deg = start.longitude_deg + (destination.longitude_deg - start.longitude_deg)/3;
+    Obstacle obstacle1 = {start.latitude_deg, obstacle1_longitude_deg, 0, 10, 10};
+    double obstacle2_longitude_deg = obstacle1.longitude_deg + ArcLengthToAngle(obstacle1.length)/3;
+    Obstacle obstacle2 = {start.latitude_deg, obstacle2_longitude_deg, 10, 20, 5};
+    Obstacle obstacle_list[2]; // Keeps track of obstacles as they are detected for simulating downward distance
     
-    PID pid_front_facing(0.0220, 10, -10, 0.1, 5, 0.01, 2);
-    //PID pid_down_facing(0.0220, 10, -10, 0.1, 5, 0.01, 2);
-    double front_pres_val, front_set_val, front_pid_output;
-    //double down_pres_val, down_set_val, down_pid_output;
+    // PID information
+    PID pid_front_avoidance(0.020, 10, -10, 0.2, 5, 0.01, 2); //For front facing distance sensor
+    PID pid_down_normal(0.020, 5, -5, 0.3, 5, 0.01, 2); // For downward facing distance sensor 0.2
+    PID pid_down_settle(0.020, 5, -5, 1, 5, 0.01, 2); // For downward facing distance sensor 0.5
+
+    double avoidance_pres_val, avoidance_set_val, avoidance_pid_output;
+    double normal_pres_val, normal_set_val, normal_pid_output;
+    double settle_pres_val, settle_set_val, settle_pid_output;
 
     std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
     std::chrono::duration<double> elapsed_seconds;
 
 
-    // Clock / Memory (main) thread
+
     while(!is_finished) {
         // Start timer for delay
         timeStart = std::chrono::system_clock::now();
         timeEnd = std::chrono::system_clock::now();
 
-        // Output Logic (Output Commands based on current state)
+        // Output Logic (Output Commands based on current state) ************************************************************************
         switch(present_state) {
-            case NORMAL:
-                stopping_is_on = false;
-                rising_is_on = false;
-                traversing_is_on = false;
+            case NORMAL: // Use both controllers
+                avoidance_is_on = false;
+                settle_is_on = false;
                 if(!normal_is_on) {
-                    ret = offb_normal_ctrl_ned(offboard, offb_mode);
+                    std::cout << TELEMETRY_CONSOLE_TEXT
+                            << "In NORMAL state" 
+                            << NORMAL_CONSOLE_TEXT << std::endl;
+                    // Initialize controller
                     normal_is_on = true;
+                    normal_set_val = 3.0;
                 } 
+                else { 
+                    /*std::cout << "normal_pid_output: " << normal_pid_output << std::endl
+                            << "current altitude: " << CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl;*/
+                    ret = offb_normal_ctrl_ned(offboard, offb_mode, normal_pid_output);
+                }
                 break;
-            case STOPPING:
+            case AVOIDANCE:
                 normal_is_on = false;
-                rising_is_on = false;
-                traversing_is_on = false;
-                if(!stopping_is_on) {
+                settle_is_on = false;
+                if(!avoidance_is_on) {
+                    std::cout << TELEMETRY_CONSOLE_TEXT
+                            << "In AVOIDANCE state" 
+                            << NORMAL_CONSOLE_TEXT << std::endl;
                     // initialize controller
-                    stopping_is_on = true;
-                    front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
-                    front_set_val = 3;
+                    avoidance_is_on = true;
+                    avoidance_set_val = 3.0;
                 }
-                else if(stopping_is_on && !zero_velocity) {
-                    // velocity command
-                    ret = offb_stopping_ctrl_ned(offboard, front_pid_output, offb_mode);
-                    
-                    // Present Value is given by obstacle distance 
-                    front_pres_val = CalculateObstacleDistance(telemetry, obstacle);
-
-                    // update controller
-                    front_pid_output = pid_front_facing.Calculate(front_set_val, front_pres_val); 
-                }
-                else if(stopping_is_on && zero_velocity) {
-                    // end controller
-                        // do nothing
-                }
-                // Temporary Debug Info
-                std::cout << "Obstacle Distance: " << CalculateObstacleDistance(telemetry, obstacle) << std::endl 
-                            << "Front PID Output Value: " << front_pid_output << std::endl;
-                    
+                else {
+                    std::cout //<< "avoidance_pid_output: " << avoidance_pid_output << std::endl
+                            //<< "front_pres_val: " << avoidance_pres_val << std::endl
+                            //<< "front_set_val: " << avoidance_set_val << std::endl
+                            << "Obstacle Distance: " << CalculateObstacleDistance(copter_longitude_deg, obstacle1) << std::endl;
+                    ret = offb_avoidance_ctrl_ned(offboard, offb_mode, avoidance_pid_output);
+                }   
                 break;
-            case RISING:
+            case SETTLE: // Second part of AVOIDANCE
                 normal_is_on = false;
-                stopping_is_on = false;
-                traversing_is_on = false;
-                if(!rising_is_on) {
-                    ret = offb_rising_ctrl_ned(offboard, offb_mode);
-                    rising_is_on = true;
+                avoidance_is_on = false;
+                if(!settle_is_on) {
+                    std::cout << TELEMETRY_CONSOLE_TEXT
+                            << "In SETTLE state" 
+                            << NORMAL_CONSOLE_TEXT << std::endl;
+                    // Initialize settling
+                    settle_is_on = true;
+                    settle_set_val = double(copter_relative_altitude_m) + 3.0;
                 }
-                break;
-            case TRAVERSE:
-                normal_is_on = false;
-                stopping_is_on = false;
-                rising_is_on = false;
-                if(!traversing_is_on) {
-                    ret = offb_traversing_ctrl_ned(offboard, offb_mode);
-                    traversing_is_on = true;
+                else  {
+                    /*std::cout << "settle_pid_output: " << settle_pid_output << std::endl
+                            << "current altitude: " << copter_relative_altitude_m << std::endl;*/
+                    ret = offb_settle_ctrl_ned(offboard, offb_mode, settle_pid_output);
                 }
                 break;
             case FINISH:
@@ -179,67 +193,84 @@ int main(int argc, char **argv)
         if (ret == false) // throw error if there is an issue with sending velocity commands
             return EXIT_FAILURE;
         
-        // Get New Data (Update variables/Inputs to Next state logic)
-        if((CalculateObstacleDistance(telemetry,obstacle) <= 40.0) && (telemetry->position().longitude_deg <= destination.longitude_deg))
-            object_detected = true;
+
+        // New Data ********************************************************************************************************************************
+            // New copter data
+        copter_longitude_deg = telemetry->position().longitude_deg;
+        //copter_latitude_deg = telemetry->position().latitude_deg;
+        copter_relative_altitude_m = double(telemetry->position().relative_altitude_m);
+
+            // New PID Data
+        avoidance_pres_val = CalculateObstacleDistance(copter_longitude_deg, obstacle1);
+        avoidance_pid_output = pid_front_avoidance.Calculate(avoidance_set_val, avoidance_pres_val);
+
+        normal_pres_val = CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list);
+        normal_pid_output = pid_down_normal.Calculate(normal_set_val, normal_pres_val);
+
+        settle_pres_val = copter_relative_altitude_m;
+        settle_pid_output = pid_down_settle.Calculate(settle_set_val, settle_pres_val);
+
+    
+            // Update Variables
+        if( IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle1) 
+                || IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle2) )
+            object_detected = true; // Detects if there is an object directly in front of copter picked up by distance sensor
         else
             object_detected = false;
-        if((fabs(telemetry->ground_speed_ned().velocity_east_m_s) <= 0.1f) && (fabs(CalculateObstacleDistance(telemetry, obstacle) - front_set_val) <= 0.01))
-            zero_velocity = true;
+        
+        if(settle_set_val - copter_relative_altitude_m <= 0.5) // What value?
+            is_settled = true;
         else
-            zero_velocity = false;
-        if(telemetry->position().relative_altitude_m >= 5.0f + float(obstacle.topAltitude))
-            height_is_reached = true;
-        else 
-            height_is_reached = false;
-        if(ObstacleCleared(telemetry, obstacle))
-            object_is_cleared = true;
-        else 
-            object_is_cleared = false;
+            is_settled = false;
 
-        // Next State Logic
+        if(copter_longitude_deg >= destination.longitude_deg)
+            is_destination_reached = true;
+        else
+            is_destination_reached = false;
+
+
+        // Next State Logic ***********************************************************************************************************************
         next_state = present_state; // default next state
         switch(present_state) {
             case NORMAL:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg) // if destination is reached or if current longitude is 
-                    next_state = FINISH;                                            // greater than destination longitude
-                else if(object_detected)    // object within 40 meters
-                    next_state = STOPPING;
+                if(is_destination_reached) // if current longitude is greater than destination longitude 
+                    next_state = FINISH;                                            
+                else if(object_detected)
+                    next_state = AVOIDANCE;   
                 break;
-            case STOPPING:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+            case AVOIDANCE:
+                if(is_destination_reached)
                     next_state = FINISH;
-                else if(zero_velocity)
-                    next_state = RISING;
+                else if(!object_detected)  
+                    next_state = SETTLE;
                 break;
-            case RISING:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg)
+            case SETTLE: // Need to check for obstacle again in case another obstacle is there immediately before settling finishes
+                if(is_destination_reached)
                     next_state = FINISH;
-                else if(height_is_reached)
-                    next_state = TRAVERSE;
-                break;
-            case TRAVERSE:
-                if(telemetry->position().longitude_deg >= destination.longitude_deg)
-                    next_state = FINISH;
-                else if(object_is_cleared)
+                else if(object_detected)
+                    next_state = AVOIDANCE;
+                else if(is_settled) {
                     next_state = NORMAL;
+                    /*std::cout << TELEMETRY_CONSOLE_TEXT 
+                            << "relative_altitude_m: " << copter_relative_altitude_m << std::endl
+                            << "settle_set_value: " << settle_set_val << std::endl
+                            << NORMAL_CONSOLE_TEXT << std::endl;*/
+                }    
                 break;
             case FINISH:
                 next_state = FINISH;
                 break;
         }
         
-        // Memory (Update present state)
+        // Memory (Update present state) *********************************************************************************************************
         present_state = next_state;
 
-        // Delay
+        // Delay *********************************************************************************************************************************
         elapsed_seconds = timeEnd-timeStart;
         while(elapsed_seconds.count() <= 0.020) {
             timeEnd = std::chrono::system_clock::now();
             elapsed_seconds = timeEnd-timeStart;
         }
-
-        //std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
 
     }
 

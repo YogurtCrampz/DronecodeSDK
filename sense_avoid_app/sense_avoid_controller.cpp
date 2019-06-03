@@ -49,79 +49,56 @@ void usage(std::string bin_name)
               << "For example, to connect to the simulator use URL: udp://:14540" << std::endl;
 }
 
-bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode)
+bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode, double down_present_value)
 {
     /*offboard_log(offb_mode, "Turn to face East");
     offboard->set_velocity_ned({0.0f, 0.0f, 0.0f, 90.0f});
     sleep_for(seconds(2)); // Let yaw settle*/  // add another state for settling yaw?
 
+    float vel_downf = float(down_present_value);
+
     // Go West 100m 
     offboard_log(offb_mode, "Normal Sequence Velocity Command");
-    //offboard->set_velocity_ned({0.0f, 5.0f, 0.0f, 90.0f});
-    offboard->set_velocity_ned({0.0f, 10.0f, 0.0f, 90.0f});
+    
+    offboard->set_velocity_ned({0.0f, 10.0f, vel_downf, 90.0f});
     //sleep_for(seconds(4)); // it'll do other stuff in the mean time
 
     return true;
 }
 
-bool offb_stopping_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, double present_value, std::string offb_mode) {
-    float vel_eastf = float(present_value);
-
+bool offb_avoidance_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode,
+                            double front_present_value) {
+    // Move up at constant speed until object is no longer in front, then save that last altitude, 
+    // and use altitude controller to go to that altitude plus 3 m setpoint.
+    float vel_downf = float(-1) * 10.0f;
+    float vel_eastf = float(front_present_value);
+    
     // Implement velocity command for stopping sequence
-    offboard_log(offb_mode, "Stopping Sequence Velocity Command");
-    offboard->set_velocity_ned({0.0f, vel_eastf, 0.0f, 0.0f});
+    offboard_log(offb_mode, "Avoidance Sequence Velocity Command");
+    offboard->set_velocity_ned({0.0f, vel_eastf, vel_downf, 0.0f});
     //sleep_for(seconds(4)); 
 
     return true;
 };
 
-bool offb_rising_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode) {
-    float vel_risef = float(-1) * 5.0f;
+bool offb_settle_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode,
+                            double down_present_value) {
+    float vel_downf = float(down_present_value);
+    float vel_eastf = 3.0f;
 
     // Raise altitude until object is no longer seen
-    offboard_log(offb_mode, "Rising Sequence Velocity Command");
-    offboard->set_velocity_ned({0.0f, 0.0f, vel_risef, 0.0f});
+    offboard_log(offb_mode, "Settle Sequence Velocity Command");
+    offboard->set_velocity_ned({0.0f, vel_eastf, vel_downf, 0.0f});
     //sleep_for(seconds(4));
 
     return true;
 };
 
-bool offb_traversing_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode) {
-    float vel_forwardf = 5.0f;
-
-    // Go forward until down sensor picks up something within maybe 5 meters then turn on altitude controller
-    // Then have semi-normal state?
-    offboard_log(offb_mode, "Traversing Sequence Velocity Command");
-    offboard->set_velocity_ned({0.0f, vel_forwardf, 0.0f, 0.0f});
-    //sleep_for(seconds(4));
-
-    return true;
-}
-
-
-
-bool ObstacleCleared(std::shared_ptr<dronecode_sdk::Telemetry> telemetry, Obstacle obstacle) {
-    // Calculate longitude of obstacle ending point: angle_deg = (180/pi) * s / R
-    double earth_radius = 6.371e+6; // in meters
-    double obst_end_angle_deg = obstacle.longitude_deg + (180 / M_PI) * obstacle.length / earth_radius;
-    double obst_end_buffer_angle_deg = obstacle.longitude_deg + (180 / M_PI) * 2 / earth_radius; // Provides 2 m of clearance.
-    if(telemetry->position().longitude_deg >= (obst_end_angle_deg + obst_end_buffer_angle_deg))
-        return true;
-    else 
-        return false;
-}
 
 /********************************************************************************/
 
-double CalculateObstacleDistance(std::shared_ptr<dronecode_sdk::Telemetry> telemetry,
-                            Obstacle obstacle) { 
-    // Need for Feedback Controller
-    dronecode_sdk::Telemetry::Position currentPosition = telemetry->position();
-    
-    //double copterLatitude = currentPosition.latitude_deg * (M_PI/180); // radians
-    double copterLongitude = currentPosition.longitude_deg * (M_PI/180);
-
-    //double obstacleLatitude = obstacle.latitude_deg * (M_PI/180); // radians
+double CalculateObstacleDistance(double copter_longitude_deg, Obstacle obstacle) {     
+    double copterLongitude = copter_longitude_deg * (M_PI/180);
     double obstacleLongitude = obstacle.longitude_deg * (M_PI/180);
 
     double earth_radius = 6.371e+6; // in meters
@@ -137,28 +114,59 @@ double CalculateObstacleDistance(std::shared_ptr<dronecode_sdk::Telemetry> telem
     return obstacleDistance;
 }
 
-double CalculateDestinationDistance(std::shared_ptr<dronecode_sdk::Telemetry> telemetry,
-                                dronecode_sdk::Telemetry::Position destination) {
-    // Need to tell when application should finish
-    dronecode_sdk::Telemetry::Position currentPosition = telemetry->position();
+bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle) {
+    bool within_distance = (CalculateObstacleDistance(copter_longitude_deg, obstacle) <= 40.0) && (CalculateObstacleDistance(copter_longitude_deg, obstacle) >= 0);
+    bool within_height = ( (copter_altitude_m >= obstacle.bottomAltitude)  
+                        && (copter_altitude_m <= obstacle.topAltitude) ); 
+    bool is_detected = within_distance && within_height;
+    return is_detected;
+}
 
-    //double copterLatitude = currentPosition.latitude_deg * (M_PI/180); // radians
-    double copterLongitude = currentPosition.longitude_deg * (M_PI/180);
+double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle_list[]) { // Pass in obstacle list?
+    /*  Notes:
+            The physical distance sensor would simply return a distance, but to simulate it you need to check 
+        whether the copter coordinates overlap with any obstacles. If they do overlap then, the ground distance
+        is calculated with current altitude - obstacle height, where the current obstacle is the most recent one
+        it is trying to avoid that it overlaps with.
+            Not sure if stacks are passed into functions as a copy. I think so because you can pass it in by ref.
+    */
+    
+    double maxHeight;
+    double downDistance;
+    std::vector<Obstacle> overlapped_obstacles;
+    
+    //Obstacle obstacle;
+    //double obstacle_end_longitude_deg = obstacle.longitude_deg + ArcLengthToAngle(obstacle.length);
+    
+    // Check if current coordinates overlap with obstacle's
+    for (int i = 0; i < 2; i++) {
+        // Filter obstacles that overlap with copter
+        if( (copter_longitude_deg >= obstacle_list[i].longitude_deg) 
+            && (copter_longitude_deg <= (obstacle_list[i].longitude_deg + ArcLengthToAngle(obstacle_list[i].length) ) ) )
+            overlapped_obstacles.push_back(obstacle_list[i]);
+    }
+    // Find max altitude obstacle from remaining obstacles
+    if(overlapped_obstacles.size() == 0)
+        downDistance = copter_altitude_m;
+    else {
+        maxHeight = 0;
+        for (std::size_t i = 0; i < overlapped_obstacles.size(); i++) {
+            if (overlapped_obstacles.front().topAltitude >= maxHeight) {
+                maxHeight = overlapped_obstacles.front().topAltitude;
+                overlapped_obstacles.pop_back();
+            }   
+        }
+        downDistance = copter_altitude_m - maxHeight;
+    }
+    
+    return downDistance;
+}
 
-    //double destinationLatitude = destination.latitude_deg * (M_PI/180);
-    double destinationLongitude = destination.longitude_deg * (M_PI/180);
 
+double ArcLengthToAngle(double length) {
     double earth_radius = 6.371 * (10 ^ 6); // in meters
-    /*double haversin_alpha = haversin(copterLatitude - destinationLatitude) 
-                    + cos(copterLatitude) * cos(destinationLatitude) 
-                    * haversin(copterLongitude - destinationLongitude);
-    // theta = lattitude, phi = longitude
-
-    double destinationDistance = 2*earth_radius*asin(sqrt(haversin_alpha));*/
-
-    double destinationDistance = earth_radius * (destinationLongitude - copterLongitude);
-
-    return destinationDistance;
+    double angle_deg = (length / earth_radius) * (180/M_PI);
+    return angle_deg;
 }
 
 double haversin(double angle) { // need exception?  // radians
