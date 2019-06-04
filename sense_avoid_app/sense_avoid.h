@@ -15,7 +15,7 @@
 #include <iostream>
 #include <thread> // possibly don't need but not sure
 
-#include <stack>
+#include <array>
 #include <ctime> // for calculating state machine frequency
 #include <mutex> // For threading
 
@@ -75,14 +75,20 @@ bool offb_avoidance_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, 
 bool offb_settle_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode, double down_present_value);
 
 
-double CalculateObstacleDistance(double copter_longitude_deg, Obstacle obstacle);
+double CalculateObstacleDistance(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list);
 
-bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle);
+bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list);
 
-double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle_list[]);
+double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list);
 
 
-double ArcLengthToAngle(double length);
+double ArcLengthToAngleDeg(double length);
+
+double ArcLengthToAngleRad(double length);
+
+double AngleRadToArcLength(double angle_rad);
+
+double AngleDegToArcLength(double angle_deg);
 
 double haversin(double angle);
 

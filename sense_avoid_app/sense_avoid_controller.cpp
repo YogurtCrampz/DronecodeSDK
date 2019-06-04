@@ -60,7 +60,7 @@ bool offb_normal_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std
     // Go West 100m 
     offboard_log(offb_mode, "Normal Sequence Velocity Command");
     
-    offboard->set_velocity_ned({0.0f, 10.0f, vel_downf, 90.0f});
+    offboard->set_velocity_ned({0.0f, 5.0f, vel_downf, 90.0f});
     //sleep_for(seconds(4)); // it'll do other stuff in the mean time
 
     return true;
@@ -70,7 +70,7 @@ bool offb_avoidance_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, 
                             double front_present_value) {
     // Move up at constant speed until object is no longer in front, then save that last altitude, 
     // and use altitude controller to go to that altitude plus 3 m setpoint.
-    float vel_downf = float(-1) * 10.0f;
+    float vel_downf = float(-1) * 5.0f;
     float vel_eastf = float(front_present_value);
     
     // Implement velocity command for stopping sequence
@@ -84,7 +84,7 @@ bool offb_avoidance_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, 
 bool offb_settle_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std::string offb_mode,
                             double down_present_value) {
     float vel_downf = float(down_present_value);
-    float vel_eastf = 3.0f;
+    float vel_eastf = 5.0f;
 
     // Raise altitude until object is no longer seen
     offboard_log(offb_mode, "Settle Sequence Velocity Command");
@@ -97,11 +97,29 @@ bool offb_settle_ctrl_ned(std::shared_ptr<dronecode_sdk::Offboard> offboard, std
 
 /********************************************************************************/
 
-double CalculateObstacleDistance(double copter_longitude_deg, Obstacle obstacle) {     
-    double copterLongitude = copter_longitude_deg * (M_PI/180);
-    double obstacleLongitude = obstacle.longitude_deg * (M_PI/180);
-
+double CalculateObstacleDistance(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list) {     
+    /*  Options:
+            Could make it so that the quadcopter only sees an object if it is in the object's height window
+    */
     double earth_radius = 6.371e+6; // in meters
+    double copter_longitude_rad = copter_longitude_deg * (M_PI/180);
+    double obstacle_longitude_rad;
+    double obstacleDistance;
+    Obstacle detectedObstacle;
+    bool obstacleDetectionFlag = false;
+
+    for (int i = 0; i < int(obstacle_list.size()); i++) {
+        if( ( (copter_altitude_m >= obstacle_list[i].bottomAltitude) && (copter_altitude_m <= obstacle_list[i].topAltitude) ) 
+            && (copter_longitude_deg <= obstacle_list[i].longitude_deg) ) {
+            obstacleDetectionFlag = true;
+            detectedObstacle = obstacle_list[i];
+            obstacle_longitude_rad = detectedObstacle.longitude_deg * (M_PI/180);
+            obstacleDistance = earth_radius * (obstacle_longitude_rad - copter_longitude_rad);
+        }       
+    }
+    if(!obstacleDetectionFlag) // pointers convert to boolean false if they have a value of NULL and positive if they have something else
+        obstacleDistance = -1; // IsObstacleDetected() is false if object distance is not between 0 and 40
+
     /*double haversin_alpha = haversin(copterLatitude - obstacleLatitude) 
                     + cos(copterLatitude) * cos(obstacleLatitude) 
                     * haversin(copterLongitude - obstacleLongitude);
@@ -109,20 +127,18 @@ double CalculateObstacleDistance(double copter_longitude_deg, Obstacle obstacle)
 
     double obstacleDistance = 2*earth_radius*asin(sqrt(haversin_alpha));*/
 
-    double obstacleDistance = earth_radius * (obstacleLongitude - copterLongitude);
-
     return obstacleDistance;
 }
 
-bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle) {
-    bool within_distance = (CalculateObstacleDistance(copter_longitude_deg, obstacle) <= 40.0) && (CalculateObstacleDistance(copter_longitude_deg, obstacle) >= 0);
-    bool within_height = ( (copter_altitude_m >= obstacle.bottomAltitude)  
-                        && (copter_altitude_m <= obstacle.topAltitude) ); 
-    bool is_detected = within_distance && within_height;
+bool IsObstacleDetected(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list) {
+    double obstacle_distance = CalculateObstacleDistance(copter_longitude_deg, copter_altitude_m, obstacle_list);
+    bool within_distance = (obstacle_distance <= 40.0) && (obstacle_distance >= 0); // If negative number, then obstacle not detected
+    bool is_detected = within_distance;
+    
     return is_detected;
 }
 
-double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, Obstacle obstacle_list[]) { // Pass in obstacle list?
+double CalculateGroundDistance(double copter_longitude_deg, double copter_altitude_m, std::array<Obstacle, 2> obstacle_list) { // Pass in obstacle list?
     /*  Notes:
             The physical distance sensor would simply return a distance, but to simulate it you need to check 
         whether the copter coordinates overlap with any obstacles. If they do overlap then, the ground distance
@@ -142,7 +158,7 @@ double CalculateGroundDistance(double copter_longitude_deg, double copter_altitu
     for (int i = 0; i < 2; i++) {
         // Filter obstacles that overlap with copter
         if( (copter_longitude_deg >= obstacle_list[i].longitude_deg) 
-            && (copter_longitude_deg <= (obstacle_list[i].longitude_deg + ArcLengthToAngle(obstacle_list[i].length) ) ) )
+            && (copter_longitude_deg <= (obstacle_list[i].longitude_deg + ArcLengthToAngleDeg(obstacle_list[i].length) ) ) )
             overlapped_obstacles.push_back(obstacle_list[i]);
     }
     // Find max altitude obstacle from remaining obstacles
@@ -150,9 +166,10 @@ double CalculateGroundDistance(double copter_longitude_deg, double copter_altitu
         downDistance = copter_altitude_m;
     else {
         maxHeight = 0;
-        for (std::size_t i = 0; i < overlapped_obstacles.size(); i++) {
+        for (int i = 0; i < int(overlapped_obstacles.size()); i++) {
             if (overlapped_obstacles.front().topAltitude >= maxHeight) {
-                maxHeight = overlapped_obstacles.front().topAltitude;
+                //maxHeight = overlapped_obstacles.front().topAltitude;
+                maxHeight = overlapped_obstacles.back().topAltitude;
                 overlapped_obstacles.pop_back();
             }   
         }
@@ -163,10 +180,32 @@ double CalculateGroundDistance(double copter_longitude_deg, double copter_altitu
 }
 
 
-double ArcLengthToAngle(double length) {
-    double earth_radius = 6.371 * (10 ^ 6); // in meters
+double ArcLengthToAngleDeg(double length) {
+    double earth_radius = 6.371e+6; // in meters
     double angle_deg = (length / earth_radius) * (180/M_PI);
+
     return angle_deg;
+}
+
+double ArcLengthToAngleRad(double length) {
+    double earth_radius = 6.371e+6; // in meters
+    double angle_deg = (length / earth_radius) * (180/M_PI);
+
+    return angle_deg;
+}
+
+double AngleRadToArcLength(double angle_rad) {
+    double earth_radius = 6.371e+6; // in meters
+    double arc_length = earth_radius * angle_rad;
+
+    return arc_length;
+}
+
+double AngleDegToArcLength(double angle_deg) {
+    double earth_radius = 6.371e+6; // in meters
+    double arc_length = earth_radius * angle_deg * (M_PI/180);
+
+    return arc_length;
 }
 
 double haversin(double angle) { // need exception?  // radians

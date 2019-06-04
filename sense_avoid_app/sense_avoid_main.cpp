@@ -99,26 +99,28 @@ int main(int argc, char **argv)
 
     dronecode_sdk::Telemetry::Position start = telemetry->position();
     dronecode_sdk::Telemetry::Position destination = start;
-    destination.longitude_deg = start.longitude_deg + 0.0017986; // about 100m west of start position, 200m = 0.0017986 degrees 100 m = 0.0008993 degrees
+    destination.longitude_deg = start.longitude_deg + ArcLengthToAngleDeg(250);
 
     double copter_longitude_deg = telemetry->position().longitude_deg; 
     double copter_relative_altitude_m = double(telemetry->position().relative_altitude_m);
 
     // Simulated Obstacles to simulate sensor data
-    double obstacle1_longitude_deg = start.longitude_deg + (destination.longitude_deg - start.longitude_deg)/3;
-    Obstacle obstacle1 = {start.latitude_deg, obstacle1_longitude_deg, 0, 10, 10};
-    double obstacle2_longitude_deg = obstacle1.longitude_deg + ArcLengthToAngle(obstacle1.length)/3;
-    Obstacle obstacle2 = {start.latitude_deg, obstacle2_longitude_deg, 10, 20, 5};
-    Obstacle obstacle_list[2]; // Keeps track of obstacles as they are detected for simulating downward distance
+    double obstacle1_longitude_deg = start.longitude_deg + ArcLengthToAngleDeg(50);
+    Obstacle obstacle1 = {start.latitude_deg, obstacle1_longitude_deg, 0, 10, 150};
+    double obstacle2_longitude_deg = obstacle1.longitude_deg + ArcLengthToAngleDeg(100);
+    Obstacle obstacle2 = {start.latitude_deg, obstacle2_longitude_deg, 10, 20, 50};
+    std::array<Obstacle, 2> obstacle_list = {obstacle1, obstacle2}; 
     
     // PID information
     PID pid_front_avoidance(0.020, 10, -10, 0.2, 5, 0.01, 2); //For front facing distance sensor
-    PID pid_down_normal(0.020, 5, -5, 0.3, 5, 0.01, 2); // For downward facing distance sensor 0.2
-    PID pid_down_settle(0.020, 5, -5, 1, 5, 0.01, 2); // For downward facing distance sensor 0.5
+    PID pid_down_normal(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 0.2
+    PID pid_down_settle(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 0.5
 
     double avoidance_pres_val, avoidance_set_val, avoidance_pid_output;
     double normal_pres_val, normal_set_val, normal_pid_output;
     double settle_pres_val, settle_set_val, settle_pid_output;
+
+    //double predicted_obst_long;
 
     std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
     std::chrono::duration<double> elapsed_seconds;
@@ -144,8 +146,9 @@ int main(int argc, char **argv)
                     normal_set_val = 3.0;
                 } 
                 else { 
-                    /*std::cout << "normal_pid_output: " << normal_pid_output << std::endl
-                            << "current altitude: " << CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl;*/
+                    std::cout << "ground distance: " << CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl
+                            << "copter altitude: " << copter_relative_altitude_m << std::endl 
+                            << "Obstacle Distance: " << CalculateObstacleDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl;
                     ret = offb_normal_ctrl_ned(offboard, offb_mode, normal_pid_output);
                 }
                 break;
@@ -161,10 +164,9 @@ int main(int argc, char **argv)
                     avoidance_set_val = 3.0;
                 }
                 else {
-                    std::cout //<< "avoidance_pid_output: " << avoidance_pid_output << std::endl
-                            //<< "front_pres_val: " << avoidance_pres_val << std::endl
-                            //<< "front_set_val: " << avoidance_set_val << std::endl
-                            << "Obstacle Distance: " << CalculateObstacleDistance(copter_longitude_deg, obstacle1) << std::endl;
+                    std::cout << "ground distance: " << CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl
+                            << "copter altitude: " << copter_relative_altitude_m << std::endl
+                            << "Obstacle Distance: " << CalculateObstacleDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl;
                     ret = offb_avoidance_ctrl_ned(offboard, offb_mode, avoidance_pid_output);
                 }   
                 break;
@@ -178,10 +180,13 @@ int main(int argc, char **argv)
                     // Initialize settling
                     settle_is_on = true;
                     settle_set_val = double(copter_relative_altitude_m) + 3.0;
+                    // grab current longitude and add 3m, have a boolean flag that detects when current longitude is greater than or equal to that value.
+                    //predicted_obst_long = copter_longitude_deg + ArcLengthToAngleDeg(3.0);
                 }
                 else  {
-                    /*std::cout << "settle_pid_output: " << settle_pid_output << std::endl
-                            << "current altitude: " << copter_relative_altitude_m << std::endl;*/
+                    std::cout << "ground distance: " << CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl
+                            << "copter altitude: " << copter_relative_altitude_m << std::endl
+                            << "Obstacle Distance: " << CalculateObstacleDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) << std::endl;
                     ret = offb_settle_ctrl_ned(offboard, offb_mode, settle_pid_output);
                 }
                 break;
@@ -201,7 +206,7 @@ int main(int argc, char **argv)
         copter_relative_altitude_m = double(telemetry->position().relative_altitude_m);
 
             // New PID Data
-        avoidance_pres_val = CalculateObstacleDistance(copter_longitude_deg, obstacle1);
+        avoidance_pres_val = CalculateObstacleDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list);
         avoidance_pid_output = pid_front_avoidance.Calculate(avoidance_set_val, avoidance_pres_val);
 
         normal_pres_val = CalculateGroundDistance(copter_longitude_deg, copter_relative_altitude_m, obstacle_list);
@@ -212,13 +217,12 @@ int main(int argc, char **argv)
 
     
             // Update Variables
-        if( IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle1) 
-                || IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle2) )
+        if( IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) )
             object_detected = true; // Detects if there is an object directly in front of copter picked up by distance sensor
         else
             object_detected = false;
         
-        if(settle_set_val - copter_relative_altitude_m <= 0.5) // What value?
+        if( (fabs(settle_set_val - settle_pres_val) <= 0.2) && (fabs(normal_set_val - normal_pres_val) <= 0.2) ) 
             is_settled = true;
         else
             is_settled = false;
@@ -271,6 +275,8 @@ int main(int argc, char **argv)
             timeEnd = std::chrono::system_clock::now();
             elapsed_seconds = timeEnd-timeStart;
         }
+
+        std::cout << "Distance from Start: " << AngleDegToArcLength(copter_longitude_deg) - AngleDegToArcLength(start.longitude_deg) << std::endl;  
 
     }
 
