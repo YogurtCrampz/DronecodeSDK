@@ -1,4 +1,4 @@
-/**
+/*
  * Author: Julian Torres
  * File Name: sense_avoid_main.cpp
  * Purpose:
@@ -17,7 +17,7 @@
 #endif
 
 #ifndef PID_H
-#include "PID.h"
+#include "pid.h"
 #endif
 
 
