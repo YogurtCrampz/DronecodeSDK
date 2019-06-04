@@ -1,12 +1,4 @@
 /**
- * @file offboard_velocity.cpp
- * @brief Example that demonstrates offboard velocity control in local NED and body coordinates
- *
- * @authors Author: Julian Oes <julian@oes.ch>,
- *                  Shakthi Prashanth <shakthi.prashanth.m@intel.com>
- * @date 2017-10-17
- * 
- * 
  * Author: Julian Torres
  * File Name: sense_avoid_main.cpp
  * Purpose:
@@ -14,8 +6,10 @@
  *      Uses basic structure of:
  *          // Output Commands
  *          // Get New Data
- *          // Next Input
+ *          // Next State
+ *          // Update state
  *          // Wait for delay
+ * References:  Dronecode example offboard_velocity.cpp written by Julian Oes <julian@oes.ch>, Shakthi Prashanth <shakthi.prashanth.m@intel.com>
  */
 
 #ifndef SENSE_AVOID_H
@@ -86,9 +80,6 @@ int main(int argc, char **argv)
     offboard_log(offb_mode, "Offboard started");
 
 
-
-
-
     // Start operation --------------------------------------------------------------------------------------------------------------------------------
 
     // Variable Declarations
@@ -99,7 +90,7 @@ int main(int argc, char **argv)
 
     dronecode_sdk::Telemetry::Position start = telemetry->position();
     dronecode_sdk::Telemetry::Position destination = start;
-    destination.longitude_deg = start.longitude_deg + ArcLengthToAngleDeg(250);
+    destination.longitude_deg = start.longitude_deg + ArcLengthToAngleDeg(300); 
 
     double copter_longitude_deg = telemetry->position().longitude_deg; 
     double copter_relative_altitude_m = double(telemetry->position().relative_altitude_m);
@@ -107,20 +98,18 @@ int main(int argc, char **argv)
     // Simulated Obstacles to simulate sensor data
     double obstacle1_longitude_deg = start.longitude_deg + ArcLengthToAngleDeg(50);
     Obstacle obstacle1 = {start.latitude_deg, obstacle1_longitude_deg, 0, 10, 150};
-    double obstacle2_longitude_deg = obstacle1.longitude_deg + ArcLengthToAngleDeg(100);
-    Obstacle obstacle2 = {start.latitude_deg, obstacle2_longitude_deg, 10, 20, 50};
+    double obstacle2_longitude_deg = obstacle1.longitude_deg + ArcLengthToAngleDeg(75);
+    Obstacle obstacle2 = {start.latitude_deg, obstacle2_longitude_deg, 10, 15, 15};
     std::array<Obstacle, 2> obstacle_list = {obstacle1, obstacle2}; 
     
     // PID information
     PID pid_front_avoidance(0.020, 10, -10, 0.2, 5, 0.01, 2); //For front facing distance sensor
-    PID pid_down_normal(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 0.2
-    PID pid_down_settle(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 0.5
+    PID pid_down_normal(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 
+    PID pid_down_settle(0.020, 5, -5, 0.2, 5, 0.01, 2); // For downward facing distance sensor 
 
     double avoidance_pres_val, avoidance_set_val, avoidance_pid_output;
     double normal_pres_val, normal_set_val, normal_pid_output;
     double settle_pres_val, settle_set_val, settle_pid_output;
-
-    //double predicted_obst_long;
 
     std::chrono::time_point<std::chrono::_V2::system_clock, std::chrono::nanoseconds> timeStart, timeEnd;
     std::chrono::duration<double> elapsed_seconds;
@@ -218,7 +207,7 @@ int main(int argc, char **argv)
     
             // Update Variables
         if( IsObstacleDetected(copter_longitude_deg, copter_relative_altitude_m, obstacle_list) )
-            object_detected = true; // Detects if there is an object directly in front of copter picked up by distance sensor
+            object_detected = true; // Detects if there is an object directly in front of copter picked up by simulated distance sensor
         else
             object_detected = false;
         
@@ -237,7 +226,7 @@ int main(int argc, char **argv)
         next_state = present_state; // default next state
         switch(present_state) {
             case NORMAL:
-                if(is_destination_reached) // if current longitude is greater than destination longitude 
+                if(is_destination_reached) 
                     next_state = FINISH;                                            
                 else if(object_detected)
                     next_state = AVOIDANCE;   
@@ -248,17 +237,13 @@ int main(int argc, char **argv)
                 else if(!object_detected)  
                     next_state = SETTLE;
                 break;
-            case SETTLE: // Need to check for obstacle again in case another obstacle is there immediately before settling finishes
+            case SETTLE: 
                 if(is_destination_reached)
                     next_state = FINISH;
                 else if(object_detected)
                     next_state = AVOIDANCE;
                 else if(is_settled) {
                     next_state = NORMAL;
-                    /*std::cout << TELEMETRY_CONSOLE_TEXT 
-                            << "relative_altitude_m: " << copter_relative_altitude_m << std::endl
-                            << "settle_set_value: " << settle_set_val << std::endl
-                            << NORMAL_CONSOLE_TEXT << std::endl;*/
                 }    
                 break;
             case FINISH:

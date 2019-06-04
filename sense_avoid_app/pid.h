@@ -1,11 +1,12 @@
-/*******************************************************************************************
+/*
  * Author: Julian Torres
- * File Name: PID.h
+ * File Name: pid.h
  * Purpose:
  *      To implement a PID controller that controls distance to object
  *      in stopping sequence by sending velocity commands.
- * Resources: https://gist.github.com/bradley219/5373998 
- *****************************************************************************************/
+ * 
+ * References:  https://gist.github.com/bradley219/5373998
+ */
 
 #ifndef PID_H
 #define PID_H

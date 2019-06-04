@@ -1,23 +1,25 @@
-/************************************************************************************************************************
+/*
  * Author: Julian Torres
- * File: sense_avoid.h
+ * File Name: sense_avoid.h
  * Purpose:
  *      Header file for sense_avoid_app. Includes function prototypes for a PID controller, a feedback system plant, 
  *      a state machine, and an obstacle simulation as a virtual input.
- ***********************************************************************************************************************/
+ * 
+ * References:  Dronecode example offboard_velocity.cpp written by Julian Oes <julian@oes.ch>, Shakthi Prashanth <shakthi.prashanth.m@intel.com>
+ */
+
 #ifndef SENSE_AVOID_H
 #define SENSE_AVOID_H
 
 #define _USE_MATH_DEFINES
 
-#include <chrono>
+#include <chrono>   // Need for system time
 #include <cmath>
 #include <iostream>
-#include <thread> // possibly don't need but not sure
+#include <thread> // Need for sleep functions
 
 #include <array>
 #include <ctime> // for calculating state machine frequency
-#include <mutex> // For threading
 
 #include <dronecode_sdk/dronecode_sdk.h>
 #include <dronecode_sdk/plugins/action/action.h>
@@ -49,7 +51,7 @@ struct Obstacle {
     double length;
 };
 
-// Handles Action's result (was inline)
+// Handles Action's result 
 void action_error_exit(Action::Result result, const std::string &message);
 
 // Handles Offboard's result
